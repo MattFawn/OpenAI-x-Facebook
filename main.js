@@ -1,256 +1,359 @@
 const fs = require("fs");
-const http = require('https'); // or 'https' for https:// URLs
+const request = require('request');
+const { PORT } = require('./server.js');
+const { server } = require("./server.js");
+const http = require('https');
 const login = require("fca-unofficial");
 const axios = require("axios");
-// GLOBAL MESSAGE STORAGE
-let msgs = {};
-let vips = ['100007909449910','100011343529559'];
-/*==================================== LEECH tiktok FUNC ====================================*/
+const YoutubeMusicApi = require('youtube-music-api')
+const ytdl = require('ytdl-core');
+const ffmpeg = require('@ffmpeg-installer/ffmpeg');
+const ffmpegs = require('fluent-ffmpeg');
+const { Configuration, OpenAIApi } = require("openai");
+const configuration = new Configuration({ apiKey: process.env.OPENAI_SECRET_KEY });
+const openai = new OpenAIApi(configuration);
+ffmpegs.setFfmpegPath(ffmpeg.path);
+const musicApi = new YoutubeMusicApi()
+const settings = fs.readFileSync('./customizable/settings.config', 'utf8');
+const port = '' + PORT;
 
-async function leechTT(link) {
-    out = await axios.get("https://www.tiktokdownloader.org/check.php?v=" + link).then((response) => { return response.data.download_url }).catch((error) => { return "err" })
-    return out
-}
-/*==================================== LEECH tiktok FUNC ====================================*/
 
-/*==================================== LEECH MP3 FUNC ====================================*/
-async function conv(v, t, e) {
+var msgs = {}; //ALL MESSAGES[messageID]
+var cd = {}; //COOLDOWN[SenderID]
+var prevmsgs = Array(2).fill(Array(4)); //PREVIOUS MESSAGES 2D ARRAY [Sender ID][Message Count 1-3]
+var prevresponse = Array(2).fill(Array(4)); //AI's RESPONSE TO PREVIOUS MESSAGES [Sender ID][Message Count 1-3]
+
+
+//FOR GLOBAL SCOPES
+var prompt;
+
+
+//GETSETTINGS
+
+//BOTNAME
+const nameRegex = /name\s*=\s*'([^']+)'/;
+const match = settings.match(nameRegex);
+const botName = match[1];
+
+//ASK THE AI
+async function ask(prompt) {
+    const got = require('got');
+    var output = "Oh wait, I guess something went wrong with my system.";
+    const url = 'https://api.openai.com/v1/completions';
+    const params = {
+        "model": "text-davinci-003",
+        "prompt": prompt,
+        "max_tokens": 1500,
+        "temperature": 1
+    };
     const headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Requested-Key': 'de0cfuirtgf67a'
+        'Authorization': `Bearer ${process.env.OPENAI_SECRET_KEY}`,
+    };
+    try {
+        const response = await got.post(url, {
+            json: params,
+            headers: headers
+        }).json();
+        output = `${response.choices[0].text}`;
+    } catch (err) {
+        console.log(err)
     }
-    results = await axios.post("https://backend.svcenter.xyz/api/convert-by-45fc4be8916916ba3b8d61dd6e0d6994", "v_id=" + v + "&ftype=mp3&fquality=128&token=" + t + "&timeExpire=" + e + "&client=yt5s.com", { headers: headers }).then((response) => { return response.data.d_url }).catch((error) => { return error.message });
-    return results
-}
-async function fetch(query) {
-    const headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    results = await axios.post("https://yt5s.com/api/ajaxSearch", "q=" + query + "&vt=mp3", { headers: headers }).then((response) => { return response.data }).catch((error) => { return error.message });
-    return results
+    return output;
 }
 
-async function leechmp3(query) {
-    var songs = fetch(query);
-    let resp = await songs.then((response) => {
-        let slist = response;
-        if (slist == "err") {
-            return "err"
-        }
-        else if (slist.t < 1300) {
-            let d_url = conv(slist.vid, slist.token, slist.timeExpires).then((response) => {
-                return [response, slist.title]
-            });
-            return d_url
-        }
-        else if (slist.p == "search") {
-            return 'err'
-        }
-        else if (slist.mess.startsWith("The video you want to download is posted on TikTok.")) {
-            return 'tiktok'
-        }
-        else {
-            return 'pakyo'
-        }
+//GENERATE IMAGE
+async function img(prompt) {
+    response = await openai.createImage({
+        prompt: prompt,
+        n: 1,
+        size: "512x512"
     });
-    return resp
+    image_url = response.data.data[0].url;
+    return image_url;
 }
 
-/*==================================== LEECH MP3 FUNC ====================================*/
-
-login({ appState: JSON.parse(fs.readFileSync('appstate.json', 'utf8')) }, (err, api) => {
-    if (err) return console.error(err);
-    api.setOptions({ listenEvents: true });
-    var listenEmitter = api.listen((err, event) => {
+//LOG IN FACEBOOK
+try {
+    login({
+        appState: JSON.parse(fs.readFileSync('customizable/appstate.json', 'utf8'))
+    }, async (err, api) => {
         if (err) return console.error(err);
-        switch (event.type) {
-            case "message_reply":
-                // if (vips.includes(event.senderID)) {
-                //     api.setMessageReaction("😘", event.messageID, (err) => {
-                //     }, true);
-                // }
-                // else {
-                //     api.setMessageReaction("😆", event.messageID, (err) => {
-                //     }, true);
-                // }
-                let msgid = event.messageID
-                let input = event.body;
-                msgs[msgid] = input;
-                break
-            case "message":
-                // if (vips.includes(event.senderID)) {
-                //     api.setMessageReaction("😘", event.messageID, (err) => {
-                //     }, true);
-                // }
-                // else {
-                //     api.setMessageReaction("😆", event.messageID, (err) => {
-                //     }, true);
-                // }
-                if (event.attachments.length != 0) {
-                    if (event.attachments[0].type == "photo") {
-                        msgs[event.messageID] = ['img', event.attachments[0].url]
-                    }
-                    else if (event.attachments[0].type == "video") {
-                        msgs[event.messageID] = ['vid', event.attachments[0].url]
-                    }
-                    else if (event.attachments[0].type == "audio") {
-                        msgs[event.messageID] = ['vm', event.attachments[0].url]
-                    }
-                } else {
-                    msgs[event.messageID] = event.body
-                }
-                // if (event.body != null) {
-                //     let input = event.body;
-                //     if (input.startsWith("!leech")) {
-                //         let data = input.split(" ");
-                //         if (data.length < 2) {
-                //             api.sendMessage("⚠️Invalid Use Of Command!\n💡Usage: !leech yt_url", event.threadID);
-                //         } else {
-                //             api.sendMessage("🔃Trying to Download...", event.threadID, event.messageID);
-                //             try {
-                //                 let s = leechmp3(data[1]);
-                //                 s.then((response) => {
-                //                     if (response == "pakyo") {
-                //                         api.setMessageReaction("🖕🏾", event.messageID, (err) => {
-                //                         }, true);
-                //                         api.sendMessage("TANGINA MO PAKYOOO😠\nULOL 20mins Max Duration Only!😝", event.threadID, event.messageID);
-                //                     }
-                //                     else if (response == "err") {
-                //                         api.sendMessage("❌Invalid Input", event.threadID, event.messageID);
-                //                         api.setMessageReaction("😭", event.messageID, (err) => {
+        else console.clear();
 
-                //                         }, true);
-                //                     }
-                //                     else if (response == "tiktok") {
-                //                         api.sendMessage("❌Youtube Only, Bawal Tiktok!", event.threadID, event.messageID);
-                //                         api.setMessageReaction("😡", event.messageID, (err) => {
+        //FUNCTIONS
 
-                //                         }, true);
-                //                     }
-                //                     else if (response[0] != undefined) {
-                //                         var file = fs.createWriteStream("song.mp3");
-                //                         var targetUrl = response[0];
-                //                         var gifRequest = http.get(targetUrl, function (gifResponse) {
-                //                             gifResponse.pipe(file);
-                //                             file.on('finish', function () {
-                //                                 console.log('finished downloading..')
-                //                                 api.sendMessage('✅Download Complete! Uploading...', event.threadID)
-                //                                 var message = {
-                //                                     body: "😚Here's what ya ordered senpai!\n🎶Song Title: " + response[1] + "\n👨🏻‍💻Coded with 🖤 by: Salvador",
-                //                                     attachment: fs.createReadStream(__dirname + '/song.mp3')
-                //                                 }
-                //                                 api.sendMessage(message, event.threadID);
-                //                             });
-                //                         });
-                //                     }
-                //                 });
-                //             } catch (err) {
-                //                 api.sendMessage("⚠️Error: " + err.message, event.threadID);
-                //             }
-                //         }
-                //     }
-                //     else if (input.startsWith("!tiktokdl")) {
-                //         let data = input.split(" ");
-                //         if (data.length < 2) {
-                //             api.sendMessage("⚠️Invalid Use Of Command!\n💡Usage: !tiktok vid_url", event.threadID);
-                //         } else {
-                //             api.sendMessage("🔃Trying to Download...", event.threadID, event.messageID);
-                //             try {
-                //                 let s = leechTT(data[1]);
-                //                 s.then((response) => {
-                //                     if (response == "err") {
-                //                         api.sendMessage("❌Invalid Input", event.threadID, event.messageID);
-                //                         api.setMessageReaction("😭", event.messageID, (err) => {
-
-                //                         }, true);
-                //                     }
-                //                     else {
-                //                         var file = fs.createWriteStream("tiktok.mp4");
-                //                         var targetUrl = response;
-                //                         var gifRequest = http.get(targetUrl, function (gifResponse) {
-                //                             gifResponse.pipe(file);
-                //                             file.on('finish', function () {
-                //                                 console.log('finished downloading..')
-                //                                 api.sendMessage('✅Download Complete! Uploading...', event.threadID)
-                //                                 var message = {
-                //                                     body: "😚Here's what ya ordered senpai!\n👨🏻‍💻Coded with 🖤 by: Salvador",
-                //                                     attachment: fs.createReadStream(__dirname + '/tiktok.mp4')
-                //                                 }
-                //                                 api.sendMessage(message, event.threadID);
-                //                             });
-                //                         });
-                //                     }
-                //                 });
-                //             } catch (err) {
-                //                 api.sendMessage("⚠️Error: " + err.message, event.threadID);
-                //             }
-                //         }
-                //     }
-                // }
-                break;
-            case "message_unsend":
-                if (!vips.includes(event.senderID)) {
-                    let d = msgs[event.messageID];
-                    if (typeof (d) == "object") {
-                        api.getUserInfo(event.senderID, (err, data) => {
-                            if (err) return console.error(err);
-                            else {
-                                if (d[0] == "img") {
-                                    var file = fs.createWriteStream("photo.jpg");
-                                    var gifRequest = http.get(d[1], function (gifResponse) {
-                                        gifResponse.pipe(file);
-                                        file.on('finish', function () {
-                                            console.log('finished downloading photo..')
-                                            var message = {
-                                                body: data[event.senderID]['name'] + " unsent this photo: \n",
-                                                attachment: fs.createReadStream(__dirname + '/photo.jpg')
-                                            }
-                                            api.sendMessage(message, event.threadID);
-                                        });
-                                    });
-                                }
-                                else if (d[0] == "vid") {
-                                    var file = fs.createWriteStream("video.mp4");
-                                    var gifRequest = http.get(d[1], function (gifResponse) {
-                                        gifResponse.pipe(file);
-                                        file.on('finish', function () {
-                                            console.log('finished downloading video..')
-                                            var message = {
-                                                body: data[event.senderID]['name'] + " unsent this video: \n",
-                                                attachment: fs.createReadStream(__dirname + '/video.mp4')
-                                            }
-                                            api.sendMessage(message, event.threadID);
-                                        });
-                                    });
-                                }
-                                else if (d[0] == "vm") {
-                                    var file = fs.createWriteStream("vm.mp3");
-                                    var gifRequest = http.get(d[1], function (gifResponse) {
-                                        gifResponse.pipe(file);
-                                        file.on('finish', function () {
-                                            console.log('finished downloading audio..')
-                                            var message = {
-                                                body: data[event.senderID]['name'] + " unsent this audio: \n",
-                                                attachment: fs.createReadStream(__dirname + '/vm.mp3')
-                                            }
-                                            api.sendMessage(message, event.threadID);
-                                        });
-                                    });
-                                }
-                            }
-                        });
+        //CHECK IF THE MESSAGE IS FROM A GROUP
+        async function isGroup(id) {
+            return new Promise((resolve, reject) => {
+                api.getThreadInfo(id, (err, data) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const isGroup = data.isGroup;
+                        resolve(isGroup);
                     }
-                    else {
-                        api.getUserInfo(event.senderID, (err, data) => {
-                            if (err) return console.error(err);
-                            else {
-                                api.sendMessage(data[event.senderID]['name'] + " unsent this: \n" + msgs[event.messageID], event.threadID);
-                            }
-                        });
-                    }
-                    break;
-                }
+                });
+            });
         }
+
+
+
+        //GET NAME USING USER ID
+        async function getName(id) {
+            return new Promise((resolve, reject) => {
+                api.getUserInfo(id, (err, data) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const name = data[id].name;
+                        resolve(name);
+                    }
+                });
+            });
+        }
+
+
+
+        //GET NICKNAME USING USER ID
+        async function getNickname(id) {
+            return new Promise((resolve, reject) => {
+                api.getUserInfo(id, (err, data) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const nickname = data[id].alternateName;
+                        resolve(nickname);
+                    }
+                });
+            });
+        }
+
+        //GET PROFILE LINK USING USER ID
+        async function getProfileUrl(id) {
+            return new Promise((resolve, reject) => {
+                api.getUserInfo(id, (err, data) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const url = data[id].profileUrl;
+                        resolve(url);
+                    }
+                });
+            });
+        }
+
+        //FUNCTIONS END
+
+
+        //GET ACCOUNT INFO
+        const botID = api.getCurrentUserID(); //GET THE CURRENT's USER ID
+        const accountName = await getName(botID); //GET THE NAME OF THE CURRENT USER
+        var accountNickname = await getNickname(botID);
+        if (accountNickname == undefined) {
+            var accountNickname = 'None'
+        }; //GET THE NICKNAME OF THE CURRENT USER
+        const accountProfileUrl = await getProfileUrl(botID); //GET THE PROFILE URL OF THE CURRENT USER
+
+
+
+        //CONSOLE VERIFIER
+        console.log("\x1b[33m", 'Bot Info: ', "\x1b[0m");
+        console.log(' Bot name:   ', "\x1b[32m", botName, "\x1b[0m");
+        console.log("\x1b[30m", '------------------------------------------------------------');
+        console.log("\x1b[33m", 'Account Info: ', "\x1b[0m");
+        console.log(' Name:       ', "\x1b[32m", accountName, "\x1b[0m");
+        console.log(' ID:         ', "\x1b[32m", botID, "\x1b[0m");
+        console.log(' Nickname:   ', "\x1b[32m", accountNickname, "\x1b[0m");
+        console.log(' Profile URL:', "\x1b[32m", accountProfileUrl, "\x1b[0m");
+        console.log("\x1b[30m", '------------------------------------------------------------');
+        console.log("\x1b[33m", 'Server Info: ', "\x1b[0m");
+        console.log(' Port:       ', "\x1b[32m", port, "\x1b[0m");
+
+        console.log("\x1b[30m", '------------------------------------------------------------');
+        console.log("\x1b[33m", 'REPL Info: ', "\x1b[0m");
+        console.log(' REPL name:  ', "\x1b[32m", process.env.REPL_SLUG, "\x1b[0m");
+        console.log(' REPL owner: ', "\x1b[32m", process.env.REPL_OWNER, "\x1b[0m");
+        if (process.env.REPL_DB_URL != undefined) {
+            console.log(' REPL DB URL:', "\x1b[32m", process.env.REPL_DB_URL, "\x1b[0m");
+        }
+        console.log(' REPL ID:    ', "\x1b[32m", process.env.REPL_ID, "\x1b[0m");
+
+
+
+
+        //THE OPTION OF THE ACCOUNT
+        api.setOptions({
+            listenEvents: true,
+            selfListen: true,
+            autoMarkDelivery: false,
+            online: true
+        });
+
+        //LISTEN FOR MESSAGES
+        const listenEmitter = api.listen(async (err, event) => {
+            if (err) return console.error(err);
+
+            switch (event.type) {
+
+
+                //IF THE MESSAGE IS A REPLY TO A MESSAGE
+                case "message_reply":
+
+                    //SAVES THE NEW MESSAGE TO THE MSGS ARRAY WITH THE INDEX OF THE MESSAGE ID
+                    if (event.attachments.length != 0) {
+                        if (event.attachments[0].type == "photo") {
+                            msgs[event.messageID] = ['img', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "animated_image") {
+                            msgs[event.messageID] = ['gif', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "sticker") {
+                            msgs[event.messageID] = ['sticker', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "video") {
+                            msgs[event.messageID] = ['vid', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "audio") {
+                            msgs[event.messageID] = ['vm', event.attachments[0].url]
+                        }
+                    } else {
+                        msgs[event.messageID] = event.body
+                    }
+
+
+                    var msg = event.body;
+
+                    var fromGroup = await isGroup(event.threadID) //CHECK IF FROM A GROUP
+                    var senderName = await getName(event.senderID) // GET THE SENDERNAME
+
+                    if (!fromGroup) { //CHECK IF FROM A GROUP
+
+                        if (event.messageReply.senderID === botID && event.senderID != botID) { // CHECK IF THE MESSAGE THAT HAS BEEN REPLIED IS FROM THE BOT
+
+                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image"), if the Human is asking for an image respond "/d (the description of the image")\n\n' + botName + ': ' + event.messageReply.body + '\n\n' + senderName + ': ' + msg; //BOT: (Replied message) \n\n USER: (message)
+
+                            var response = await ask(prompt + '\n\n' + botName + ':') //ASK THE AI WITH THE ARRANGED PROMPT
+
+                            api.sendMessage(response, event.threadID, event.messageID); //SEND THE AI's RESPONSE TO THE USER
+
+                        }
+
+                    }
+                    break
+
+
+                    //IF A MESSAGE IS JUST A NORMAL MESSAGE
+                case "message":
+
+                    //SAVES THE NEW MESSAGE TO THE MSGS ARRAY WITH THE INDEX OF THE MESSAGE ID
+                    if (event.attachments.length != 0) {
+                        if (event.attachments[0].type == "photo") {
+                            msgs[event.messageID] = ['img', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "animated_image") {
+                            msgs[event.messageID] = ['gif', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "sticker") {
+                            msgs[event.messageID] = ['sticker', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "video") {
+                            msgs[event.messageID] = ['vid', event.attachments[0].url]
+                        }
+                        else if (event.attachments[0].type == "audio") {
+                            msgs[event.messageID] = ['vm', event.attachments[0].url]
+                        }
+                    } else {
+                        msgs[event.messageID] = event.body
+                    }
+
+
+                    var msg = event.body;
+
+                    var fromGroup = await isGroup(event.threadID) //CHECK IF FROM A GROUP
+                    var senderName = await getName(event.senderID) // GET THE SENDERNAME
+
+                    if (event.attachments.length < 1 && !fromGroup) { //CHECK IF FROM A GROUP
+
+                        //IF FIRST TIME MESSAGING THE AI
+                        if (!(event.senderID in prevmsgs)) {
+
+                            prevmsgs[event.senderID] = {}; //CREATE AN ARRAY FOR MESSAGE
+
+                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
+
+                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][0]; //ARRANGE THE PROMPT TO BE SENDED INTO THE AI
+
+                            //IF SECOND TIME MESSAGING THE AI
+                        } else if ((0 in prevmsgs[event.senderID])) {
+
+                            prevmsgs[event.senderID][1] = prevmsgs[event.senderID][0]; //MOVE THE FIRST MESSAGE AS THE SECOND MESSAGE
+
+                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
+
+                            try {
+                                var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][1] + '\n\n' + botName + ': ' + prevresponse[event.senderID][1] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][0];
+                            } catch (err) {
+                                console.log()
+                            } //ARRANGE THE PROMPT TO BE SENDED INTO THE AI (user: prompt, ai: response, user: prompt)
+
+                            //IF MANY TIMES MESSAGING THE AI 
+                        } else if ((1 in prevmsgs[event.senderID])) {
+
+                            prevmsgs[event.senderID][1] = prevmsgs[event.senderID][2]; //MOVE THE SECOND MESSAGE AS THE THIRD MESSAGE
+
+                            prevmsgs[event.senderID][2] = prevmsgs[event.senderID][1]; //MOVE THE FIRST MESSAGE AS THE SECOND MESSAGE
+
+                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
+
+                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][2] + '\n\n' + botName + ': ' + prevresponse[event.senderID][2] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][1] + '\n\n' + botName + ': ' + prevresponse[event.senderID][1] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][0]; //ARRANGE THE PROMPT TO BE SENDED INTO THE AI (user: prompt, ai: response, user: prompt, ai:response, user: prompt)
+                        }
+
+                        var response = await ask(prompt + '\n\n' + botName + ':') //ASK THE AI WITH THE ARRANGED PROMPT
+
+                        //IF THE USER WANTS AN IMAGE
+                        if (response.includes('/d')) {
+
+                            var imagedes = response.substring(response.indexOf(" ") + 4).toLowerCase(); //IMAGE DESCRIPTION
+
+                            var image_url = await img(imagedes); //IMAGE GENERATION(URL RETURN)
+
+                            var callback = () => api.sendMessage({
+                                body: `Here's ${imagedes}`,
+                                attachment: fs.createReadStream(__dirname + "/cache/img.png")
+                            }, event.threadID, () => fs.unlinkSync(__dirname + "/cache/img.png")); //FUNCTION THAT CREATES A READSTREAM AND DELETES IT AFTER SENDING TO THE USER
+
+                            request(image_url).pipe(fs.createWriteStream(__dirname + "/cache/img.png")).on("close", () => callback()); //WRITES THE IMAGE ON THE READSTREAM THAT HAS BEEN CREATED AND CALLS THE CALLBACK FUNCTION
+
+                        } else api.sendMessage(response, event.threadID, event.messageID); //SEND THE AI's RESPONSE TO THE USER
+
+                        //IF FIRST TIME RESPONSING TO THE CONVO
+                        if (!(event.senderID in prevresponse)) {
+
+                            prevresponse[event.senderID] = {}; //CREATE AN ARRAY FOR RESPONSE
+
+                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
+
+                            //IF SECOND TIME RESPONSING TO THE CONVO
+                        } else if ((0 in prevresponse[event.senderID])) {
+
+                            prevresponse[event.senderID][1] = prevresponse[event.senderID][0]; // MOVE THE FIRST RESPONSE AS THE SECOND RESPONSE
+
+                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
+
+                            //IF MANY TIMES RESPONSING TO THE CONVO
+                        } else if ((1 in prevresponse[event.senderID])) {
+
+                            prevresponse[event.senderID][1] = prevresponse[event.senderID][2]; //MOVE THE SECOND RESPONSE AS THE THIRD RESPONSE
+
+                            prevresponse[event.senderID][1] = prevresponse[event.senderID][0]; // MOVE THE FIRST RESPONSE AS THE SECOND RESPONSE
+
+                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
+                        }
+
+                    }
+            }
+        });
     });
-});
-// CODE BY: DM N3wbie!
+} catch (err) {
+    console.log(err);
+}
