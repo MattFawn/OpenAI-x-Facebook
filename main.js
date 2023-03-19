@@ -20,8 +20,7 @@ const port = '' + PORT;
 
 var msgs = {}; //ALL MESSAGES[messageID]
 var cd = {}; //COOLDOWN[SenderID]
-var prevmsgs = Array(2).fill(Array(4)); //PREVIOUS MESSAGES 2D ARRAY [Sender ID][Message Count 1-3]
-var prevresponse = Array(2).fill(Array(4)); //AI's RESPONSE TO PREVIOUS MESSAGES [Sender ID][Message Count 1-3]
+
 
 
 //FOR GLOBAL SCOPES
@@ -31,34 +30,22 @@ var prompt;
 //GETSETTINGS
 
 //BOTNAME
-const nameRegex = /name\s*=\s*'([^']+)'/;
-const match = settings.match(nameRegex);
+const nameRegex = /botname\s*=\s*'([^']+)'/;
+var match = settings.match(nameRegex);
 const botName = match[1];
+const ownerRegex = /owner\s*=\s*'([^']+)'/;
+match = settings.match(ownerRegex);
+const ownerName = match[1];
+
 
 //ASK THE AI
 async function ask(prompt) {
-    const got = require('got');
-    var output = "Oh wait, I guess something went wrong with my system.";
-    const url = 'https://api.openai.com/v1/completions';
-    const params = {
-        "model": "text-davinci-003",
-        "prompt": prompt,
-        "max_tokens": 1500,
-        "temperature": 1
-    };
-    const headers = {
-        'Authorization': `Bearer ${process.env.OPENAI_SECRET_KEY}`,
-    };
-    try {
-        const response = await got.post(url, {
-            json: params,
-            headers: headers
-        }).json();
-        output = `${response.choices[0].text}`;
-    } catch (err) {
-        console.log(err)
-    }
-    return output;
+    response = await openai.createChatCompletion({
+        model: "gpt-3.5-turbo",
+        messages: prompt
+      });
+      response = response.data.choices[0].message
+      return response;
 }
 
 //GENERATE IMAGE
@@ -226,19 +213,56 @@ try {
                     var fromGroup = await isGroup(event.threadID) //CHECK IF FROM A GROUP
                     var senderName = await getName(event.senderID) // GET THE SENDERNAME
 
-                    if (!fromGroup) { //CHECK IF FROM A GROUP
+                    if (event.attachments.length < 1 && !fromGroup && event.senderID!=botID) { //CHECK IF FROM A GROUP
 
-                        if (event.messageReply.senderID === botID && event.senderID != botID) { // CHECK IF THE MESSAGE THAT HAS BEEN REPLIED IS FROM THE BOT
+                        api.sendTypingIndicator(event.threadID);
+                          
+                            //PROMPT MANAGEMENT
+    
+                            if (!(event.senderID in msgs)) {
+    
+                                msgs[event.senderID] = [];
+    
+                            msgs[event.senderID].push({
+                                role: "system",
+                                content: "This is a conversation between an AI(you) and a human("+senderName+"), you are the AI created by "+ownerName+", named "+botName+", you help people find answer to any question and you can send image by responsing '/d (image description)' for example the user said: 'send me an image of an elephant' you just respond: 'Here's an image of an elephant /d elephant' no need to code or anything and you can only send one image at a time"
+                              });}
+    
+                              
+                          msgs[event.senderID].push({
+                            role: "user",
+                            content: msg+" (replying to the message: '"+event.messageReply.body+"')"
+                          });
+                            
+                            var response1 = await ask(msgs[event.senderID]) //ASK THE AI WITH THE ARRANGED PROMPT
 
-                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image"), if the Human is asking for an image respond "/d (the description of the image")\n\n' + botName + ': ' + event.messageReply.body + '\n\n' + senderName + ': ' + msg; //BOT: (Replied message) \n\n USER: (message)
-
-                            var response = await ask(prompt + '\n\n' + botName + ':') //ASK THE AI WITH THE ARRANGED PROMPT
-
-                            api.sendMessage(response, event.threadID, event.messageID); //SEND THE AI's RESPONSE TO THE USER
-
+                            var response = response1.content
+                            //IF THE USER WANTS AN IMAGE
+                            if (response.includes('/d')) {
+    
+                                var parts = response.split('/d');
+    
+                                var imagedes =  parts[1];//IMAGE DESCRIPTION
+    
+                                response = imagedes;
+    
+                                var image_url = await img(imagedes); //IMAGE GENERATION(URL RETURN)
+    
+                                var callback = () => api.sendMessage({
+                                    body: `${parts[0]}`,
+                                    attachment: fs.createReadStream(__dirname + "/cache/img.png")
+                                }, event.threadID, () => fs.unlinkSync(__dirname + "/cache/img.png")); //FUNCTION THAT CREATES A READSTREAM AND DELETES IT AFTER SENDING TO THE USER
+    
+                                request(image_url).pipe(fs.createWriteStream(__dirname + "/cache/img.png")).on("close", () => callback()); //WRITES THE IMAGE ON THE READSTREAM THAT HAS BEEN CREATED AND CALLS THE CALLBACK FUNCTION
+                              
+    
+                            } else api.sendMessage(response, event.threadID, event.messageID); //SEND THE AI's RESPONSE TO THE USER
+    
+                            //RESPONSE MANAGEMENT
+    
+                            msgs[event.senderID].push(response1);
                         }
 
-                    }
                     break
 
 
@@ -274,82 +298,52 @@ try {
 
                     if (event.attachments.length < 1 && !fromGroup) { //CHECK IF FROM A GROUP
 
-                        //IF FIRST TIME MESSAGING THE AI
-                        if (!(event.senderID in prevmsgs)) {
+                    api.sendTypingIndicator(event.threadID);
+                      
+                        //PROMPT MANAGEMENT
 
-                            prevmsgs[event.senderID] = {}; //CREATE AN ARRAY FOR MESSAGE
+                        if (!(event.senderID in msgs)) {
 
-                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
+                            msgs[event.senderID] = [];
 
-                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][0]; //ARRANGE THE PROMPT TO BE SENDED INTO THE AI
+                        msgs[event.senderID].push({
+                            role: "system",
+                            content: "This is a conversation between an AI(you) and a human("+senderName+"), you are the AI created by "+ownerName+", named "+botName+", you help people find answer to any question and you can send image by responsing '/d (image description)'"
+                          });}
 
-                            //IF SECOND TIME MESSAGING THE AI
-                        } else if ((0 in prevmsgs[event.senderID])) {
-
-                            prevmsgs[event.senderID][1] = prevmsgs[event.senderID][0]; //MOVE THE FIRST MESSAGE AS THE SECOND MESSAGE
-
-                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
-
-                            try {
-                                var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][1] + '\n\n' + botName + ': ' + prevresponse[event.senderID][1] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][0];
-                            } catch (err) {
-                                console.log()
-                            } //ARRANGE THE PROMPT TO BE SENDED INTO THE AI (user: prompt, ai: response, user: prompt)
-
-                            //IF MANY TIMES MESSAGING THE AI 
-                        } else if ((1 in prevmsgs[event.senderID])) {
-
-                            prevmsgs[event.senderID][1] = prevmsgs[event.senderID][2]; //MOVE THE SECOND MESSAGE AS THE THIRD MESSAGE
-
-                            prevmsgs[event.senderID][2] = prevmsgs[event.senderID][1]; //MOVE THE FIRST MESSAGE AS THE SECOND MESSAGE
-
-                            prevmsgs[event.senderID][0] = msg; //SAVE THE NEW MESSAGE AS THE FIRST MESSAGE
-
-                            var prompt = 'This is a conversation between an AI(Druit) and a Human, if the Human is asking for an image respond "/d (the description of the image")\n\n' + senderName + ': ' + prevmsgs[event.senderID][2] + '\n\n' + botName + ': ' + prevresponse[event.senderID][2] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][1] + '\n\n' + botName + ': ' + prevresponse[event.senderID][1] + '\n\n' + senderName + ': ' + prevmsgs[event.senderID][0]; //ARRANGE THE PROMPT TO BE SENDED INTO THE AI (user: prompt, ai: response, user: prompt, ai:response, user: prompt)
-                        }
-
-                        var response = await ask(prompt + '\n\n' + botName + ':') //ASK THE AI WITH THE ARRANGED PROMPT
-
+                          
+                      msgs[event.senderID].push({
+                        role: "user",
+                        content: msg
+                      });
+                        
+                        var response1 = await ask(msgs[event.senderID]) //ASK THE AI WITH THE ARRANGED PROMPT
+                    
+                        var response = response1.content
                         //IF THE USER WANTS AN IMAGE
                         if (response.includes('/d')) {
 
-                            var imagedes = response.substring(response.indexOf(" ") + 4).toLowerCase(); //IMAGE DESCRIPTION
+                            var parts = response.split('/d');
+
+                            var imagedes =  parts[1];//IMAGE DESCRIPTION
+
+                            response = imagedes;
 
                             var image_url = await img(imagedes); //IMAGE GENERATION(URL RETURN)
 
                             var callback = () => api.sendMessage({
-                                body: `Here's ${imagedes}`,
+                                body: `${parts[0]}`,
                                 attachment: fs.createReadStream(__dirname + "/cache/img.png")
                             }, event.threadID, () => fs.unlinkSync(__dirname + "/cache/img.png")); //FUNCTION THAT CREATES A READSTREAM AND DELETES IT AFTER SENDING TO THE USER
 
                             request(image_url).pipe(fs.createWriteStream(__dirname + "/cache/img.png")).on("close", () => callback()); //WRITES THE IMAGE ON THE READSTREAM THAT HAS BEEN CREATED AND CALLS THE CALLBACK FUNCTION
+                          
 
                         } else api.sendMessage(response, event.threadID, event.messageID); //SEND THE AI's RESPONSE TO THE USER
 
-                        //IF FIRST TIME RESPONSING TO THE CONVO
-                        if (!(event.senderID in prevresponse)) {
+                        //RESPONSE MANAGEMENT
 
-                            prevresponse[event.senderID] = {}; //CREATE AN ARRAY FOR RESPONSE
-
-                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
-
-                            //IF SECOND TIME RESPONSING TO THE CONVO
-                        } else if ((0 in prevresponse[event.senderID])) {
-
-                            prevresponse[event.senderID][1] = prevresponse[event.senderID][0]; // MOVE THE FIRST RESPONSE AS THE SECOND RESPONSE
-
-                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
-
-                            //IF MANY TIMES RESPONSING TO THE CONVO
-                        } else if ((1 in prevresponse[event.senderID])) {
-
-                            prevresponse[event.senderID][1] = prevresponse[event.senderID][2]; //MOVE THE SECOND RESPONSE AS THE THIRD RESPONSE
-
-                            prevresponse[event.senderID][1] = prevresponse[event.senderID][0]; // MOVE THE FIRST RESPONSE AS THE SECOND RESPONSE
-
-                            prevresponse[event.senderID][0] = response; //SAVE THE NEW RESPONSE AS THE FIRST RESPONSE
-                        }
-
+                        msgs[event.senderID].push(response1);
                     }
             }
         });
