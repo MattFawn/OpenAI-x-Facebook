@@ -1,5 +1,6 @@
 const fs = require("fs");
 const request = require('request');
+const cron = require('node-cron');
 const { PORT } = require('./server.js');
 const { server } = require("./server.js");
 const http = require('https');
@@ -21,7 +22,9 @@ const port = '' + PORT;
 var msgs = {}; //ALL MESSAGES[messageID]
 var cd = {}; //COOLDOWN[SenderID]
 
-
+cron.schedule('5 * * * *', () => {
+    process.exit()
+  });
 
 //FOR GLOBAL SCOPES
 var prompt;

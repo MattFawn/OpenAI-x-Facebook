@@ -34,5 +34,5 @@ elif [ $(wc -c < "customizable/appstate.json") -eq 0 ]; then
 elif grep -q "^name *= *''" customizable/settings.config; then
  echo -e "${RED}An error occured. Check if there's any empty variables at customizable/settings.config${NC}"
 else
- node main.js
-fi
+ while true; do node main.js; done
+ fi

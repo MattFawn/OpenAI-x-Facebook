@@ -12,6 +12,7 @@
     "got": "^11.8.0",
     "image-recognition": "^1.1.0",
     "jimp": "^0.22.4",
+    "node-cron": "^3.0.2",
     "openai": "^3.2.1",
     "request": "^2.88.2",
     "sharp": "^0.31.3",
